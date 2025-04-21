@@ -4,7 +4,7 @@
 // @version      2025-04-21
 // @description  Shows bean scores on jinteki.net
 // @author       nbkelly
-// @match        *.jinteki.net*
+// @match        *.jinteki.net
 // @match        *.jinteki.net/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=jinteki.net
 // @grant        GM_getValue
