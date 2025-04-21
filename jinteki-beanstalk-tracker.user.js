@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Beanteki
 // @namespace    https://github.com/nbkelly/jinteki-beanstalk-tracker
-// @version      2025-04-21
+// @version      2025-04-22
 // @description  Shows bean scores on jinteki.net
 // @author       nbkelly
-// @match        *.jinteki.net*
+// @match        *.jinteki.net
 // @match        *.jinteki.net/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=jinteki.net
+// @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -29,6 +30,45 @@ GM_registerMenuCommand("Set Season", () => {
 
 (function() {
     'use strict';
+
+    const script = document.createElement('script');
+    script.textContent = `(${injectedWS.toString()})();`;
+    document.documentElement.appendChild(script);
+    script.remove();
+
+    function injectedWS() {
+        const OriginalWebSocket = window.WebSocket;
+
+        window.WebSocket = function (...args) {
+            const ws = new OriginalWebSocket(...args);
+
+            ws.addEventListener('message', (event) => {
+                if (typeof event.data === 'string') {
+                    if (event.data.startsWith('[[[:lobby/list')) {
+                        console.log("Lobby listed");
+                        window.dispatchEvent(new CustomEvent('ws-decorate', { detail: event.data }));
+                    } else if (event.data.startsWith('[[[:game/diff')) {
+                        window.dispatchEvent(new CustomEvent('ws-game-diff', { detail: event.data }));
+                    }
+                }
+            });
+
+            return ws;
+        };
+
+        window.WebSocket.prototype = OriginalWebSocket.prototype;
+
+        console.log('[Injected Script] WebSocket hooked successfully.');}
+
+    window.addEventListener('ws-decorate', (e) => {
+        const { type, data } = e.detail;
+        scheduleDecorate();
+    });
+
+    window.addEventListener('ws-game-diff', (e) => {
+        const { type, data } = e.detail;
+        scheduleDecorateUsername();
+    });
 
     const seasonId = GM_getValue('seasonId', '');
 
@@ -111,7 +151,6 @@ GM_registerMenuCommand("Set Season", () => {
         })}
 
     const userMetadata = {};
-
     fetch(apiURL)
         .then(response => response.json())
         .then(data => {
@@ -157,25 +196,11 @@ GM_registerMenuCommand("Set Season", () => {
     };
     XMLHttpRequest.prototype.send = function() {
         this.addEventListener('load', function() {
-            if (this.responseText && this.responseText.startsWith('[[[:lobby/list')) {
+            if (this.responseType == 'text' && this.responseText && this.responseText.startsWith('[[[:lobby/list')) {
                 scheduleDecorate();
             }
-            if (this.responseText && this.responseText.startsWith('[[[:game/diff')) {
-                const now = Date.now();
-                if (pendingTimeout) {
-                    clearTimeout(pendingTimeout);
-                    pendingTimeout = null;
-                }
-
-                // Throttle: at least 15s between updates
-                if (now - lastUpdate > 15000) {
-                    pendingTimeout = setTimeout(() => {
-                        console.log('[LeaderboardUpdater] Triggering name update...');
-                        decorateUsernames(userMetadata); // <-- your function here
-                        lastUpdate = Date.now();
-                        pendingTimeout = null;
-                    }, 250); // wait quarter second
-                }
+            if (this.responseType == 'text' && this.responseText && this.responseText.startsWith('[[[:game/diff')) {
+                scheduleDecorateUsername();
             }
         });
         return send.apply(this, arguments);
@@ -187,4 +212,24 @@ GM_registerMenuCommand("Set Season", () => {
 
     const MIN_INTERVAL_MS = 15_000;
     const DELAY_MS = 3_000;
+
+    const now = Date.now();
+
+    function scheduleDecorateUsername() {
+        if (pendingTimeout) {
+            clearTimeout(pendingTimeout);
+            pendingTimeout = null;
+        }
+
+        if (now - lastUpdate > MIN_INTERVAL_MS) {
+            pendingTimeout = setTimeout(() => {
+                console.log('[WS Listener] Updating usernames...');
+                if (typeof decorateUsernames === 'function') {
+                    decorateUsernames(userMetadata);
+                }
+                lastUpdate = Date.now();
+                pendingTimeout = null;
+            }, DELAY_MS);
+        }}
+
 })();
